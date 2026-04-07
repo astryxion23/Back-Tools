@@ -10,38 +10,50 @@ import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.entity.RenderLayerParent;
 import net.minecraft.client.renderer.entity.layers.RenderLayer;
+import net.minecraft.client.renderer.entity.state.PlayerRenderState;
 import net.minecraft.client.renderer.texture.OverlayTexture;
-import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.Pose;
-import net.minecraft.world.entity.player.PlayerModelPart;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ShieldItem;
 import net.minecraft.world.level.Level;
 
-public class BackToolLayer extends RenderLayer<AbstractClientPlayer, PlayerModel<AbstractClientPlayer>>
+public class BackToolLayer extends RenderLayer<PlayerRenderState, PlayerModel>
 {
-    public BackToolLayer(RenderLayerParent<AbstractClientPlayer, PlayerModel<AbstractClientPlayer>> renderer)
+    public BackToolLayer(RenderLayerParent<PlayerRenderState, PlayerModel> renderer)
     {
         super(renderer);
     }
 
     @Override
-    public void render(PoseStack poseStack, MultiBufferSource buffer, int packedLight, AbstractClientPlayer player, float limbSwing, float limbSwingAmount, float partialTick, float ageInTicks, float netHeadYaw, float headPitch)
+    public void render(PoseStack poseStack, MultiBufferSource buffer, int packedLight, PlayerRenderState state, float limbSwing, float limbSwingAmount)
     {
-        boolean capeWouldHideBackTools = player.isModelPartShown(PlayerModelPart.CAPE) && player.getCloakTextureLocation() != null;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null)
+        {
+            return;
+        }
+        Entity entity = mc.level.getEntity(state.id);
+        if (!(entity instanceof AbstractClientPlayer player))
+        {
+            return;
+        }
+
+        boolean capeWouldHideBackTools = state.showCape && state.skin != null && state.skin.capeTexture() != null;
         boolean allowRenderDespiteCape = BackToolsConfig.SHOW_BACK_TOOLS_WITH_CAPE.get();
-        if ((!capeWouldHideBackTools || allowRenderDespiteCape) && !player.isInvisible() && !player.isSleeping() && EventHandler.heldTools.containsKey(player))
+        if ((!capeWouldHideBackTools || allowRenderDespiteCape) && !state.isInvisible && !state.hasPose(Pose.SLEEPING) && EventHandler.heldTools.containsKey(player))
         {
             EventHandler.HeldInfo info = EventHandler.heldTools.get(player);
-            boolean enableEasterEgg = BackToolsConfig.EASTER_EGG.get() && (player.getPose() == Pose.SWIMMING || player.isFallFlying() || player.getName().getString().equalsIgnoreCase("iChun"));
+            boolean enableEasterEgg = BackToolsConfig.EASTER_EGG.get() && (state.pose == Pose.SWIMMING || state.isFallFlying || (state.name != null && state.name.equalsIgnoreCase("iChun")));
 
             poseStack.pushPose();
 
-            float offset = !player.getItemBySlot(EquipmentSlot.CHEST).isEmpty() ? 1.0F : player.isModelPartShown(PlayerModelPart.JACKET) ? 0.5F : 0F;
-            boolean mainIsRight = player.getMainArm() == HumanoidArm.RIGHT;
+            float offset = !state.chestItem.isEmpty() ? 1.0F : state.showJacket ? 0.5F : 0F;
+            boolean mainIsRight = state.mainArm == HumanoidArm.RIGHT;
             int tickAnim = enableEasterEgg ? player.tickCount : 0;
+            float partialTick = state.partialTick;
 
             getParentModel().body.translateAndRotate(poseStack);
             renderBackItems(poseStack, buffer, packedLight, player.level(), info.lastMain, info.lastOff, mainIsRight, tickAnim, partialTick, offset);
