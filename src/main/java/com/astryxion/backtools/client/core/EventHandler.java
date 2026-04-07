@@ -5,21 +5,22 @@ import com.astryxion.backtools.common.core.BackToolsConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
-import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.event.entity.EntityJoinLevelEvent;
-import net.minecraftforge.event.level.LevelEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.registries.ForgeRegistries;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
+import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
+import net.neoforged.neoforge.event.level.LevelEvent;
+import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 
 import javax.annotation.Nonnull;
 import java.util.HashMap;
@@ -30,7 +31,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @OnlyIn(Dist.CLIENT)
-@Mod.EventBusSubscriber(modid = BackTools.MOD_ID, value = Dist.CLIENT)
+@EventBusSubscriber(modid = BackTools.MOD_ID, value = Dist.CLIENT)
 public class EventHandler
 {
     public static WeakHashMap<AbstractClientPlayer, HeldInfo> heldTools = new WeakHashMap<>();
@@ -161,11 +162,11 @@ public class EventHandler
     }
 
     @SubscribeEvent
-    public static void onPlayerTick(TickEvent.PlayerTickEvent event)
+    public static void onPlayerTick(PlayerTickEvent.Pre event)
     {
-        if (event.phase == TickEvent.Phase.START && event.player.level().isClientSide)
+        if (event.getEntity().level().isClientSide)
         {
-            AbstractClientPlayer player = (AbstractClientPlayer) event.player;
+            AbstractClientPlayer player = (AbstractClientPlayer) event.getEntity();
             if (!player.isAlive())
             {
                 heldTools.remove(player);
@@ -173,7 +174,7 @@ public class EventHandler
             else
             {
                 HeldInfo info = heldTools.computeIfAbsent(player, v -> new HeldInfo());
-                info.tick(player.getMainHandItem().copy(), player.getOffhandItem().copy());
+                info.tick(player.getMainHandItem().copy(), player.getOffhandItem().copy(), player.level().registryAccess());
             }
         }
     }
@@ -218,7 +219,7 @@ public class EventHandler
 
     public static boolean isItemTool(Item item)
     {
-        ResourceLocation key = ForgeRegistries.ITEMS.getKey(item);
+        ResourceLocation key = BuiltInRegistries.ITEM.getKey(item);
         if (key == null)
         {
             return false;
@@ -261,27 +262,35 @@ public class EventHandler
         return false;
     }
 
-    public static boolean areItemStacksEqualToolsIgnoreDamage(@Nonnull ItemStack stackA, @Nonnull ItemStack stackB)
+    public static boolean areItemStacksEqualToolsIgnoreDamage(@Nonnull ItemStack stackA, @Nonnull ItemStack stackB, HolderLookup.Provider registries)
     {
-        if (stackA.isEmpty() || stackB.isEmpty() || stackA.hasTag() && !stackB.hasTag() || !stackA.hasTag() && stackB.hasTag() || stackA.getItem() != stackB.getItem())
+        if (stackA.isEmpty() || stackB.isEmpty() || stackA.getItem() != stackB.getItem())
         {
             return false;
         }
-        else if (stackA.hasTag() && stackB.hasTag())
+        boolean patchA = !stackA.isComponentsPatchEmpty();
+        boolean patchB = !stackB.isComponentsPatchEmpty();
+        if (patchA != patchB)
         {
-            CompoundTag tagA = stackA.getTag().copy();
-            CompoundTag tagB = stackB.getTag().copy();
+            return false;
+        }
+        if (patchA && patchB)
+        {
+            CompoundTag tagA = new CompoundTag();
+            stackA.save(registries, tagA);
+            CompoundTag tagB = new CompoundTag();
+            stackB.save(registries, tagB);
             for (String s : BackToolsConfig.NBT_CLEANER.get())
             {
                 tagA.remove(s);
                 tagB.remove(s);
             }
 
-            return tagA.equals(tagB) && stackA.areCapsCompatible(stackB);
+            return tagA.equals(tagB) && ItemStack.isSameItemSameComponents(stackA, stackB);
         }
         else
         {
-            return stackA.areCapsCompatible(stackB);
+            return ItemStack.isSameItemSameComponents(stackA, stackB);
         }
     }
 
@@ -295,33 +304,33 @@ public class EventHandler
         public ItemStack toolMain = ItemStack.EMPTY;
         public ItemStack toolOff = ItemStack.EMPTY;
 
-        public void tick(ItemStack main, ItemStack off)
+        public void tick(ItemStack main, ItemStack off, HolderLookup.Provider registries)
         {
             if (itemEntity != null && !itemEntity.getItem().isEmpty())
             {
-                checkItem(itemEntity);
+                checkItem(itemEntity, registries);
 
                 itemEntity = null;
                 return;
             }
 
-            if (areItemStacksEqualToolsIgnoreDamage(main, lastMain) || areItemStacksEqualToolsIgnoreDamage(off, lastMain))
+            if (areItemStacksEqualToolsIgnoreDamage(main, lastMain, registries) || areItemStacksEqualToolsIgnoreDamage(off, lastMain, registries))
             {
                 lastMain = ItemStack.EMPTY;
             }
 
-            if (areItemStacksEqualToolsIgnoreDamage(main, lastOff) || areItemStacksEqualToolsIgnoreDamage(off, lastOff))
+            if (areItemStacksEqualToolsIgnoreDamage(main, lastOff, registries) || areItemStacksEqualToolsIgnoreDamage(off, lastOff, registries))
             {
                 lastOff = ItemStack.EMPTY;
             }
 
-            if (!toolMain.isEmpty() && !areItemStacksEqualToolsIgnoreDamage(main, toolMain) && !areItemStacksEqualToolsIgnoreDamage(off, toolMain))
+            if (!toolMain.isEmpty() && !areItemStacksEqualToolsIgnoreDamage(main, toolMain, registries) && !areItemStacksEqualToolsIgnoreDamage(off, toolMain, registries))
             {
                 lastMain = toolMain;
                 toolMain = ItemStack.EMPTY;
             }
 
-            if (!toolOff.isEmpty() && !areItemStacksEqualToolsIgnoreDamage(main, toolOff) && !areItemStacksEqualToolsIgnoreDamage(off, toolOff))
+            if (!toolOff.isEmpty() && !areItemStacksEqualToolsIgnoreDamage(main, toolOff, registries) && !areItemStacksEqualToolsIgnoreDamage(off, toolOff, registries))
             {
                 lastOff = toolOff;
                 toolOff = ItemStack.EMPTY;
@@ -330,7 +339,7 @@ public class EventHandler
             if (isItemTool(main.getItem()))
             {
                 toolMain = main;
-                if (areItemStacksEqualToolsIgnoreDamage(toolMain, toolOff))
+                if (areItemStacksEqualToolsIgnoreDamage(toolMain, toolOff, registries))
                 {
                     toolOff = ItemStack.EMPTY;
                 }
@@ -339,31 +348,31 @@ public class EventHandler
             if (isItemTool(off.getItem()))
             {
                 toolOff = off;
-                if (areItemStacksEqualToolsIgnoreDamage(toolOff, toolMain))
+                if (areItemStacksEqualToolsIgnoreDamage(toolOff, toolMain, registries))
                 {
                     toolMain = ItemStack.EMPTY;
                 }
             }
         }
 
-        public void checkItem(ItemEntity item)
+        public void checkItem(ItemEntity item, HolderLookup.Provider registries)
         {
-            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), lastMain))
+            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), lastMain, registries))
             {
                 lastMain = ItemStack.EMPTY;
             }
 
-            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), toolMain))
+            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), toolMain, registries))
             {
                 toolMain = ItemStack.EMPTY;
             }
 
-            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), lastOff))
+            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), lastOff, registries))
             {
                 lastOff = ItemStack.EMPTY;
             }
 
-            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), toolOff))
+            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), toolOff, registries))
             {
                 toolOff = ItemStack.EMPTY;
             }
