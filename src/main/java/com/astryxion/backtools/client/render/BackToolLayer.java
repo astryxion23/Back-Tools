@@ -30,7 +30,7 @@ public class BackToolLayer extends RenderLayer<AbstractClientPlayer, PlayerModel
     @Override
     public void render(PoseStack poseStack, MultiBufferSource buffer, int packedLight, AbstractClientPlayer player, float limbSwing, float limbSwingAmount, float partialTick, float ageInTicks, float netHeadYaw, float headPitch)
     {
-        boolean capeWouldHideBackTools = player.isModelPartShown(PlayerModelPart.CAPE) && player.getCloakTextureLocation() != null;
+        boolean capeWouldHideBackTools = player.isModelPartShown(PlayerModelPart.CAPE) && player.getSkin().capeTexture() != null;
         boolean allowRenderDespiteCape = BackToolsConfig.SHOW_BACK_TOOLS_WITH_CAPE.get();
         if ((!capeWouldHideBackTools || allowRenderDespiteCape) && !player.isInvisible() && !player.isSleeping() && EventHandler.heldTools.containsKey(player))
         {
