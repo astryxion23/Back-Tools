@@ -1,54 +1,46 @@
 package com.astryxion.backtools.common;
 
+import com.astryxion.backtools.client.core.ClientModBusEvents;
 import com.astryxion.backtools.client.core.EventHandler;
 import com.astryxion.backtools.common.core.BackToolsConfig;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
-import net.minecraftforge.eventbus.api.IEventBus;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.fml.IExtensionPoint;
-import net.minecraftforge.fml.ModLoadingContext;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.config.ModConfig;
-import net.minecraftforge.fml.event.lifecycle.FMLLoadCompleteEvent;
-import net.minecraftforge.fml.event.lifecycle.InterModProcessEvent;
-import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
-import net.minecraftforge.network.NetworkConstants;
-import org.apache.logging.log4j.Level;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLLoadCompleteEvent;
+import net.neoforged.fml.event.lifecycle.InterModProcessEvent;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.HashMap;
 import java.util.HashSet;
 
-@Mod(BackTools.MOD_ID)
+@Mod(value = BackTools.MOD_ID, dist = { Dist.CLIENT })
 public class BackTools
 {
     public static final String MOD_ID = "backtools";
-    public static final String MOD_NAME = "Back Tools";
 
     public static final Logger LOGGER = LogManager.getLogger();
 
     public static HashMap<Class<? extends Item>, Integer> imcOrientation = new HashMap<>();
     public static HashSet<ResourceLocation> imcDisabledTools = new HashSet<>();
 
-    public BackTools()
+    public BackTools(IEventBus modEventBus, ModContainer modContainer)
     {
-        IEventBus modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
-        ModLoadingContext modLoadingContext = ModLoadingContext.get();
+        modContainer.registerConfig(ModConfig.Type.CLIENT, BackToolsConfig.SPEC, BackToolsConfig.fileName());
 
-        modLoadingContext.registerConfig(ModConfig.Type.CLIENT, BackToolsConfig.SPEC);
+        modEventBus.addListener(ClientModBusEvents::onAddLayers);
+        modEventBus.addListener(ClientModBusEvents::onModConfigLoading);
+        modEventBus.addListener(ClientModBusEvents::onModConfigReloading);
 
-        DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
-            modEventBus.addListener(this::processIMC);
-            modEventBus.addListener(this::finishLoading);
-        });
-        DistExecutor.unsafeRunWhenOn(Dist.DEDICATED_SERVER, () -> () -> LOGGER.log(Level.ERROR, "You are loading " + MOD_NAME + " on a server. " + MOD_NAME + " is a client only mod!"));
-
-        modLoadingContext.registerExtensionPoint(IExtensionPoint.DisplayTest.class, () -> new IExtensionPoint.DisplayTest(() -> NetworkConstants.IGNORESERVERONLY, (a, b) -> true));
+        modEventBus.addListener(this::processIMC);
+        modEventBus.addListener(this::finishLoading);
     }
 
     @OnlyIn(Dist.CLIENT)
@@ -64,7 +56,7 @@ public class BackTools
             Object o = msg.getMessageSupplier().get();
             if (o instanceof ItemStack is)
             {
-                ResourceLocation key = net.minecraftforge.registries.ForgeRegistries.ITEMS.getKey(is.getItem());
+                ResourceLocation key = BuiltInRegistries.ITEM.getKey(is.getItem());
                 if (!is.isEmpty() && key != null && imcDisabledTools.add(key))
                 {
                     LOGGER.info("IMC-{}: Disabled {}", msg.getSenderModId(), key);
@@ -76,7 +68,7 @@ public class BackTools
             }
             else if (o instanceof Item item)
             {
-                ResourceLocation key = net.minecraftforge.registries.ForgeRegistries.ITEMS.getKey(item);
+                ResourceLocation key = BuiltInRegistries.ITEM.getKey(item);
                 if (key != null && imcDisabledTools.add(key))
                 {
                     LOGGER.info("IMC-{}: Disabled {}", msg.getSenderModId(), item);
