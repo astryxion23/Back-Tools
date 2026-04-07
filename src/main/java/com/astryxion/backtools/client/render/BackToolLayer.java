@@ -50,7 +50,7 @@ public class BackToolLayer extends RenderLayer<PlayerRenderState, PlayerModel>
 
             poseStack.pushPose();
 
-            float offset = !state.chestItem.isEmpty() ? 1.0F : state.showJacket ? 0.5F : 0F;
+            float offset = !state.chestEquipment.isEmpty() ? 1.0F : state.showJacket ? 0.5F : 0F;
             boolean mainIsRight = state.mainArm == HumanoidArm.RIGHT;
             int tickAnim = enableEasterEgg ? player.tickCount : 0;
             float partialTick = state.partialTick;
