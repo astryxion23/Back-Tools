@@ -1,0 +1,12 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="${mod_license}"
+issueTrackerURL="https://github.com/Astryxion/backtools/issues"
+
+[[mods]]
+modId="backtools"
+version="${mod_version}"
+displayName="${mod_name}"
+displayURL="https://github.com/Astryxion/backtools"
+authors="${mod_authors}"
+description='''${mod_description}'''
