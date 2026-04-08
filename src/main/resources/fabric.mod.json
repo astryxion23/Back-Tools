@@ -1,0 +1,24 @@
+{
+	"schemaVersion": 1,
+	"id": "backtools",
+	"version": "${version}",
+	"name": "Back Tools",
+	"description": "Shows equipped tools on the player's back.",
+	"authors": [
+		"Astryxion",
+		"iChun"
+	],
+	"license": "MIT",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"com.astryxion.backtools.BackToolsClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.16.0",
+		"minecraft": "~1.21.6",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}
