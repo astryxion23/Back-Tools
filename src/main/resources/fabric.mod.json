@@ -1,0 +1,32 @@
+{
+	"schemaVersion": 1,
+	"id": "backtools",
+	"version": "${version}",
+	"name": "Back Tools",
+	"description": "Shows held tools on the player's back when not in use.",
+	"authors": [
+		"Astryxion"
+	],
+	"contact": {
+		"homepage": "https://github.com/Astryxion/backtools",
+		"sources": "https://github.com/Astryxion/backtools",
+		"issues": "https://github.com/Astryxion/backtools/issues"
+	},
+	"license": "CC0-1.0",
+	"environment": "client",
+	"entrypoints": {
+		"main": [
+			"com.astryxion.backtools.common.BackTools"
+		],
+		"client": [
+			"com.astryxion.backtools.client.BackToolsClient"
+		]
+	},
+	"mixins": [],
+	"depends": {
+		"fabricloader": ">=0.16.0",
+		"minecraft": "~1.21.3",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}
