@@ -10,5 +10,9 @@
   "config.backtools.prop.toolOrientation.name": "Tool Orientation",
   "config.backtools.prop.toolOrientation.desc": "Tool orientation, by class file and degrees. Separate with \":\" . See defaults for examples.",
   "config.backtools.prop.nbtCleaner.name": "NBT Cleaner",
-  "config.backtools.prop.nbtCleaner.desc": "Some nbt tags will cause back tools to appear improperly. Use this setting to cleanse the item tags."
+  "config.backtools.prop.nbtCleaner.desc": "Some nbt tags will cause back tools to appear improperly. Use this setting to cleanse the item tags.",
+  "config.backtools.prop.easterEgg.name": "Easter Egg",
+  "config.backtools.prop.easterEgg.desc": "When enabled, swimming, elytra flight, or the player name iChun adds extra rotation to back tools.",
+  "config.backtools.prop.showBackToolsWithCape.name": "Show Back Tools With Cape",
+  "config.backtools.prop.showBackToolsWithCape.desc": "When false, back tools stay hidden if the skin has a cape texture (vanilla Back Tools behavior). Set true to always show them."
 }
