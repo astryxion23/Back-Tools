@@ -3,38 +3,76 @@ package com.astryxion.backtools.client.core;
 import com.astryxion.backtools.client.render.BackToolLayer;
 import com.astryxion.backtools.common.BackTools;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.entity.EntityRenderer;
-import net.minecraft.client.renderer.entity.player.PlayerRenderer;
-import net.minecraft.world.entity.player.Player;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.client.event.EntityRenderersEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.config.ModConfig;
-import net.minecraftforge.fml.event.config.ModConfigEvent;
+import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.client.renderer.entity.player.AvatarRenderer;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.player.PlayerModelType;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.config.ModConfigEvent;
+import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 
-@Mod.EventBusSubscriber(modid = BackTools.MOD_ID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
+
 public final class ClientModBusEvents
 {
     private ClientModBusEvents()
     {
     }
 
-    @SubscribeEvent
     public static void onAddLayers(EntityRenderersEvent.AddLayers event)
     {
-        for (String skinName : event.getSkins())
+        Set<AvatarRenderer<AbstractClientPlayer>> layered = Collections.newSetFromMap(new IdentityHashMap<>());
+        int added = 0;
+        for (PlayerModelType model : event.getSkins())
         {
-            EntityRenderer<? extends Player> renderer = event.getPlayerSkin(skinName);
-            if (renderer instanceof PlayerRenderer playerRenderer)
+            AvatarRenderer<AbstractClientPlayer> renderer = event.getPlayerRenderer(model);
+            if (renderer == null)
             {
-                playerRenderer.addLayer(new BackToolLayer(playerRenderer));
+                continue;
             }
+            if (layered.add(renderer))
+            {
+                renderer.addLayer(new BackToolLayer(renderer));
+                added++;
+            }
+        }
+        if (event.getEntityTypes().contains(EntityType.PLAYER))
+        {
+            var playerRendererObj = event.getRenderer(EntityType.PLAYER);
+            if (playerRendererObj instanceof AvatarRenderer<?> avatarRendererUnchecked)
+            {
+                @SuppressWarnings("unchecked")
+                AvatarRenderer<AbstractClientPlayer> playerRenderer = (AvatarRenderer<AbstractClientPlayer>) avatarRendererUnchecked;
+                if (layered.add(playerRenderer))
+                {
+                    playerRenderer.addLayer(new BackToolLayer(playerRenderer));
+                    added++;
+                }
+            }
+        }
+        if (added > 0)
+        {
+            BackTools.LOGGER.info("Back Tools: attached BackToolLayer to {} AvatarRenderer instance(s)", added);
+        }
+        else
+        {
+            BackTools.LOGGER.warn("Back Tools: AddLayers found no AvatarRenderer to attach BackToolLayer — in-world player may not show back items.");
         }
     }
 
-    @SubscribeEvent
-    public static void onModConfig(ModConfigEvent event)
+    public static void onModConfigLoading(ModConfigEvent.Loading event)
+    {
+        onModConfig(event);
+    }
+
+    public static void onModConfigReloading(ModConfigEvent.Reloading event)
+    {
+        onModConfig(event);
+    }
+
+    private static void onModConfig(ModConfigEvent event)
     {
         if (!BackTools.MOD_ID.equals(event.getConfig().getModId()))
         {
