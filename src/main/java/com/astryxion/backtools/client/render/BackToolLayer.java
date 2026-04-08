@@ -7,50 +7,138 @@ import com.astryxion.backtools.common.core.BackToolsConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.entity.RenderLayerParent;
 import net.minecraft.client.renderer.entity.layers.RenderLayer;
+import net.minecraft.client.renderer.entity.state.PlayerRenderState;
 import net.minecraft.client.renderer.texture.OverlayTexture;
-import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.player.PlayerModelPart;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ShieldItem;
 import net.minecraft.world.level.Level;
 
-public class BackToolLayer extends RenderLayer<AbstractClientPlayer, PlayerModel<AbstractClientPlayer>>
+public class BackToolLayer extends RenderLayer<PlayerRenderState, PlayerModel>
 {
-    public BackToolLayer(RenderLayerParent<AbstractClientPlayer, PlayerModel<AbstractClientPlayer>> renderer)
+    public BackToolLayer(RenderLayerParent<PlayerRenderState, PlayerModel> renderer)
     {
         super(renderer);
     }
 
     @Override
-    public void render(PoseStack poseStack, MultiBufferSource buffer, int packedLight, AbstractClientPlayer player, float limbSwing, float limbSwingAmount, float partialTick, float ageInTicks, float netHeadYaw, float headPitch)
+    public void render(PoseStack poseStack, MultiBufferSource buffer, int packedLight, PlayerRenderState state, float limbSwing, float limbSwingAmount)
     {
-        boolean capeWouldHideBackTools = player.isModelPartShown(PlayerModelPart.CAPE) && player.getCloakTextureLocation() != null;
-        boolean allowRenderDespiteCape = BackToolsConfig.SHOW_BACK_TOOLS_WITH_CAPE.get();
-        if ((!capeWouldHideBackTools || allowRenderDespiteCape) && !player.isInvisible() && !player.isSleeping() && EventHandler.heldTools.containsKey(player))
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null)
+        {
+            return;
+        }
+
+        AbstractClientPlayer player = resolvePlayerForRender(mc, state);
+        if (player == null)
+        {
+            return;
+        }
+
+        if (skipBackToolsForCape(state, player))
+        {
+            return;
+        }
+
+        if (!state.isInvisible && !state.hasPose(Pose.SLEEPING) && EventHandler.heldTools.containsKey(player))
         {
             EventHandler.HeldInfo info = EventHandler.heldTools.get(player);
-            boolean enableEasterEgg = BackToolsConfig.EASTER_EGG.get() && (player.getPose() == Pose.SWIMMING || player.isFallFlying() || player.getName().getString().equalsIgnoreCase("iChun"));
+            boolean enableEasterEgg = BackToolsConfig.EASTER_EGG.get() && (state.pose == Pose.SWIMMING || state.isFallFlying || (state.name != null && state.name.equalsIgnoreCase("iChun")));
 
             poseStack.pushPose();
 
-            float offset = !player.getItemBySlot(EquipmentSlot.CHEST).isEmpty() ? 1.0F : player.isModelPartShown(PlayerModelPart.JACKET) ? 0.5F : 0F;
-            boolean mainIsRight = player.getMainArm() == HumanoidArm.RIGHT;
+            float offset = !state.chestEquipment.isEmpty() ? 1.0F : state.showJacket ? 0.5F : 0F;
+            boolean mainIsRight = state.mainArm == HumanoidArm.RIGHT;
             int tickAnim = enableEasterEgg ? player.tickCount : 0;
+            float partialTick = state.partialTick;
 
             getParentModel().body.translateAndRotate(poseStack);
-            renderBackItems(poseStack, buffer, packedLight, player.level(), info.lastMain, info.lastOff, mainIsRight, tickAnim, partialTick, offset);
+            renderBackItems(poseStack, buffer, packedLight, player, info.lastMain, info.lastOff, mainIsRight, tickAnim, partialTick, offset);
 
             poseStack.popPose();
         }
     }
 
-    private static void renderBackItems(PoseStack poseStack, MultiBufferSource buffer, int packedLight, Level level, ItemStack mainStack, ItemStack offStack, boolean mainIsRight, int ticks, float partialTick, float offset)
+    /**
+     * Match vanilla {@code PlayerRenderer.extractRenderState}: {@link PlayerRenderState#id} is {@link Player#getId()}.
+     * Only resolve by id / profile name — never by position (can pick the wrong player or miss when coords diverge).
+     */
+    private static AbstractClientPlayer resolvePlayerForRender(Minecraft mc, PlayerRenderState state)
+    {
+        Level level = mc.level;
+        Entity entity = level.getEntity(state.id);
+        if (entity instanceof AbstractClientPlayer acp)
+        {
+            return acp;
+        }
+
+        LocalPlayer local = mc.player;
+        if (local != null && local.level() == level)
+        {
+            if (local.getId() == state.id)
+            {
+                return local;
+            }
+            if (state.name != null && state.name.equals(local.getGameProfile().getName()))
+            {
+                return local;
+            }
+        }
+
+        for (Player p : level.players())
+        {
+            if (p.getId() == state.id && p instanceof AbstractClientPlayer acp)
+            {
+                return acp;
+            }
+        }
+
+        if (state.name != null && !state.name.isEmpty())
+        {
+            for (Player p : level.players())
+            {
+                if (p instanceof AbstractClientPlayer acp)
+                {
+                    if (state.name.equals(acp.getGameProfile().getName()) || state.name.equals(acp.getName().getString()))
+                    {
+                        return acp;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Classic Back Tools: no back items when a cape would show. Default config = skip. Set {@code showBackToolsWithCape}
+     * to override. Uses the same test as src 1.21.4 on {@link PlayerRenderState}, plus the live player when 1.21.x
+     * state does not match what you see in third person.
+     */
+    private static boolean skipBackToolsForCape(PlayerRenderState state, AbstractClientPlayer player)
+    {
+        if (BackToolsConfig.SHOW_BACK_TOOLS_WITH_CAPE.get())
+        {
+            return false;
+        }
+        boolean like124 = state.showCape && state.skin != null && state.skin.capeTexture() != null;
+        var skin = player.getSkin();
+        boolean fromPlayer = player.isModelPartShown(PlayerModelPart.CAPE) && skin != null && skin.capeTexture() != null;
+        return like124 || fromPlayer;
+    }
+
+    private static void renderBackItems(PoseStack poseStack, MultiBufferSource buffer, int packedLight, LivingEntity renderEntity, ItemStack mainStack, ItemStack offStack, boolean mainIsRight, int ticks, float partialTick, float offset)
     {
         poseStack.translate(0F, 4F / 16F, 1.91F / 16F + (offset / 16F));
         if (!mainStack.isEmpty())
@@ -91,7 +179,7 @@ public class BackToolLayer extends RenderLayer<AbstractClientPlayer, PlayerModel
                     poseStack.mulPose(Axis.ZP.rotationDegrees((ticks + partialTick) * 40F));
                 }
             }
-            Minecraft.getInstance().getItemRenderer().renderStatic(mainStack, ItemDisplayContext.FIXED, packedLight, OverlayTexture.NO_OVERLAY, poseStack, buffer, level, 0);
+            Minecraft.getInstance().getItemRenderer().renderStatic(renderEntity, mainStack, ItemDisplayContext.FIXED, poseStack, buffer, renderEntity.level(), packedLight, OverlayTexture.NO_OVERLAY, 0);
             poseStack.popPose();
         }
         if (!offStack.isEmpty())
@@ -129,7 +217,7 @@ public class BackToolLayer extends RenderLayer<AbstractClientPlayer, PlayerModel
                     poseStack.mulPose(Axis.ZP.rotationDegrees((ticks + partialTick) * 40F));
                 }
             }
-            Minecraft.getInstance().getItemRenderer().renderStatic(offStack, ItemDisplayContext.FIXED, packedLight, OverlayTexture.NO_OVERLAY, poseStack, buffer, level, 0);
+            Minecraft.getInstance().getItemRenderer().renderStatic(renderEntity, offStack, ItemDisplayContext.FIXED, poseStack, buffer, renderEntity.level(), packedLight, OverlayTexture.NO_OVERLAY, 0);
         }
     }
 }
