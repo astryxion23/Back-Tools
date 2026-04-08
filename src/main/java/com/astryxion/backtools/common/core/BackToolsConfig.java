@@ -1,60 +1,38 @@
 package com.astryxion.backtools.common.core;
 
-import com.google.common.collect.Lists;
 import com.astryxion.backtools.common.BackTools;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.annotations.SerializedName;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.world.item.DiggerItem;
 import net.minecraft.world.item.FishingRodItem;
 import net.minecraft.world.item.HoeItem;
 import net.minecraft.world.item.ProjectileWeaponItem;
 import net.minecraft.world.item.ShearsItem;
-import net.minecraft.world.item.TieredItem;
+import net.minecraft.world.item.SwordItem;
 import net.minecraft.world.item.TridentItem;
-import net.minecraftforge.common.ForgeConfigSpec;
 
+import java.io.IOException;
+import java.io.Reader;
+import java.io.Writer;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Local replacement for the former iChunUtil-backed config. Default lists match the original Back Tools 1.16.5 mod,
- * adapted only where Minecraft class names changed (e.g. ToolItem → DiggerItem, ShootableItem → ProjectileWeaponItem).
+ * Same options and defaults as Forge {@code ForgeConfigSpec} client config; stored as JSON under the Fabric config directory.
  */
 public final class BackToolsConfig
 {
-    private static final ForgeConfigSpec.Builder BUILDER = new ForgeConfigSpec.Builder();
+    private static final String LEGACY_TIERED_ITEM_CLASS = "net.minecraft.world.item.TieredItem";
 
-    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> ENABLED_TOOLS_ID = BUILDER
-            .comment("Enabled tools by resource location pattern (regex).")
-            .defineListAllowEmpty("enabledToolsID", Lists.newArrayList(), o -> o instanceof String);
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
-    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> ENABLED_TOOLS_CLASS = BUILDER
-            .comment("Enabled tools by fully qualified class name (must extend Item).")
-            .defineListAllowEmpty("enabledToolsClass", defaultEnabledToolsClass(), o -> o instanceof String);
-
-    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> DISABLED_TOOLS_ID = BUILDER
-            .comment("Disabled tools by resource location pattern (regex).")
-            .defineListAllowEmpty("disabledToolsID", defaultDisabledToolsId(), o -> o instanceof String);
-
-    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> DISABLED_TOOLS_CLASS = BUILDER
-            .comment("Disabled tools by fully qualified class name.")
-            .defineListAllowEmpty("disabledToolsClass", Lists.newArrayList(), o -> o instanceof String);
-
-    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> TOOL_ORIENTATION = BUILDER
-            .comment("Per-class Z rotation in degrees, formatted as \"fully.qualified.ClassName:degrees\".")
-            .defineListAllowEmpty("toolOrientation", defaultToolOrientation(), o -> o instanceof String);
-
-    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> NBT_CLEANER = BUILDER
-            .comment("NBT keys stripped when comparing tool stacks (same as original).")
-            .defineListAllowEmpty("nbtCleaner", defaultNbtCleaner(), o -> o instanceof String);
-
-    public static final ForgeConfigSpec.BooleanValue EASTER_EGG = BUILDER
-            .comment("When true, enables the swimming / elytra / name-based rotation easter egg (former iChunUtil client flag, default on).")
-            .define("easterEgg", true);
-
-    public static final ForgeConfigSpec.BooleanValue SHOW_BACK_TOOLS_WITH_CAPE = BUILDER
-            .comment("Vanilla Back Tools hid back items when the cape skin part was on and a cloak texture existed (e.g. Mojang cape). Set true to show back tools anyway.")
-            .define("showBackToolsWithCape", false);
-
-    public static final ForgeConfigSpec SPEC = BUILDER.build();
+    private static volatile Storage storage = Storage.withDefaults();
+    private static Path configPath;
+    private static long lastLoadedModifiedTime;
 
     private BackToolsConfig()
     {
@@ -62,13 +40,270 @@ public final class BackToolsConfig
 
     public static String fileName()
     {
-        return BackTools.MOD_ID + "-client.toml";
+        return BackTools.MOD_ID + "-client.json";
+    }
+
+    public static void loadFromDisk()
+    {
+        configPath = FabricLoader.getInstance().getConfigDir().resolve(fileName());
+        try
+        {
+            Files.createDirectories(configPath.getParent());
+        }
+        catch (IOException e)
+        {
+            BackTools.LOGGER.error("Could not create config directory", e);
+        }
+        if (!Files.isRegularFile(configPath))
+        {
+            storage = Storage.withDefaults();
+            saveToDisk();
+            touchLastModified();
+            return;
+        }
+        try (Reader reader = Files.newBufferedReader(configPath))
+        {
+            Storage parsed = GSON.fromJson(reader, Storage.class);
+            storage = Storage.mergeWithDefaults(parsed);
+            touchLastModified();
+        }
+        catch (Exception e)
+        {
+            BackTools.LOGGER.error("Failed to load {}, using defaults", fileName(), e);
+            storage = Storage.withDefaults();
+            touchLastModified();
+        }
+    }
+
+    public static boolean reloadIfChanged()
+    {
+        if (configPath == null || !Files.isRegularFile(configPath))
+        {
+            return false;
+        }
+        try
+        {
+            long mtime = Files.getLastModifiedTime(configPath).toMillis();
+            if (mtime != lastLoadedModifiedTime)
+            {
+                loadFromDisk();
+                return true;
+            }
+        }
+        catch (IOException ignored)
+        {
+        }
+        return false;
+    }
+
+    private static void saveToDisk()
+    {
+        if (configPath == null)
+        {
+            return;
+        }
+        try (Writer writer = Files.newBufferedWriter(configPath))
+        {
+            GSON.toJson(storage, writer);
+        }
+        catch (IOException e)
+        {
+            BackTools.LOGGER.error("Failed to save {}", fileName(), e);
+        }
+    }
+
+    private static void touchLastModified()
+    {
+        if (configPath == null || !Files.isRegularFile(configPath))
+        {
+            lastLoadedModifiedTime = 0L;
+            return;
+        }
+        try
+        {
+            lastLoadedModifiedTime = Files.getLastModifiedTime(configPath).toMillis();
+        }
+        catch (IOException e)
+        {
+            lastLoadedModifiedTime = 0L;
+        }
+    }
+
+    public static List<String> enabledToolsId()
+    {
+        return storage.enabledToolsID;
+    }
+
+    public static List<String> enabledToolsClass()
+    {
+        return storage.enabledToolsClass;
+    }
+
+    public static List<String> disabledToolsId()
+    {
+        return storage.disabledToolsID;
+    }
+
+    public static List<String> disabledToolsClass()
+    {
+        return storage.disabledToolsClass;
+    }
+
+    public static List<String> toolOrientation()
+    {
+        return storage.toolOrientation;
+    }
+
+    public static List<String> nbtCleaner()
+    {
+        return storage.nbtCleaner;
+    }
+
+    public static boolean easterEgg()
+    {
+        return storage.easterEgg != null ? storage.easterEgg : true;
+    }
+
+    public static boolean showBackToolsWithCape()
+    {
+        return storage.showBackToolsWithCape != null && storage.showBackToolsWithCape;
+    }
+
+    private static final class Storage
+    {
+        @SerializedName("enabledToolsID")
+        List<String> enabledToolsID = new ArrayList<>();
+
+        @SerializedName("enabledToolsClass")
+        List<String> enabledToolsClass = new ArrayList<>();
+
+        @SerializedName("disabledToolsID")
+        List<String> disabledToolsID = new ArrayList<>();
+
+        @SerializedName("disabledToolsClass")
+        List<String> disabledToolsClass = new ArrayList<>();
+
+        @SerializedName("toolOrientation")
+        List<String> toolOrientation = new ArrayList<>();
+
+        @SerializedName("nbtCleaner")
+        List<String> nbtCleaner = new ArrayList<>();
+
+        @SerializedName("easterEgg")
+        Boolean easterEgg;
+
+        @SerializedName("showBackToolsWithCape")
+        Boolean showBackToolsWithCape;
+
+        static Storage withDefaults()
+        {
+            Storage s = new Storage();
+            s.enabledToolsID = new ArrayList<>();
+            s.enabledToolsClass = defaultEnabledToolsClass();
+            s.disabledToolsID = defaultDisabledToolsId();
+            s.disabledToolsClass = new ArrayList<>();
+            s.toolOrientation = defaultToolOrientation();
+            s.nbtCleaner = defaultNbtCleaner();
+            s.easterEgg = Boolean.TRUE;
+            s.showBackToolsWithCape = Boolean.FALSE;
+            return s;
+        }
+
+        static Storage mergeWithDefaults(Storage parsed)
+        {
+            Storage d = withDefaults();
+            if (parsed == null)
+            {
+                return d;
+            }
+            if (parsed.enabledToolsID != null)
+            {
+                d.enabledToolsID = new ArrayList<>(parsed.enabledToolsID);
+            }
+            if (parsed.enabledToolsClass != null)
+            {
+                d.enabledToolsClass = new ArrayList<>(parsed.enabledToolsClass);
+            }
+            if (parsed.disabledToolsID != null)
+            {
+                d.disabledToolsID = new ArrayList<>(parsed.disabledToolsID);
+            }
+            if (parsed.disabledToolsClass != null)
+            {
+                d.disabledToolsClass = new ArrayList<>(parsed.disabledToolsClass);
+            }
+            if (parsed.toolOrientation != null)
+            {
+                d.toolOrientation = new ArrayList<>(parsed.toolOrientation);
+            }
+            if (parsed.nbtCleaner != null)
+            {
+                d.nbtCleaner = new ArrayList<>(parsed.nbtCleaner);
+            }
+            if (parsed.easterEgg != null)
+            {
+                d.easterEgg = parsed.easterEgg;
+            }
+            if (parsed.showBackToolsWithCape != null)
+            {
+                d.showBackToolsWithCape = parsed.showBackToolsWithCape;
+            }
+            migrateLegacyTieredItemClass(d.enabledToolsClass);
+            migrateLegacyTieredItemClass(d.disabledToolsClass);
+            migrateLegacyTieredItemOrientation(d.toolOrientation);
+            return d;
+        }
+    }
+
+    private static void migrateLegacyTieredItemClass(List<String> list)
+    {
+        for (int i = list.size() - 1; i >= 0; i--)
+        {
+            if (LEGACY_TIERED_ITEM_CLASS.equals(list.get(i)))
+            {
+                list.remove(i);
+                addClassNameIfAbsent(list, DiggerItem.class.getName());
+                addClassNameIfAbsent(list, SwordItem.class.getName());
+            }
+        }
+    }
+
+    private static void migrateLegacyTieredItemOrientation(List<String> list)
+    {
+        for (int i = list.size() - 1; i >= 0; i--)
+        {
+            String entry = list.get(i);
+            if (entry.startsWith(LEGACY_TIERED_ITEM_CLASS + ":"))
+            {
+                String suffix = entry.substring(LEGACY_TIERED_ITEM_CLASS.length());
+                list.remove(i);
+                addOrientationEntryIfAbsent(list, DiggerItem.class.getName() + suffix);
+                addOrientationEntryIfAbsent(list, SwordItem.class.getName() + suffix);
+            }
+        }
+    }
+
+    private static void addClassNameIfAbsent(List<String> list, String className)
+    {
+        if (!list.contains(className))
+        {
+            list.add(className);
+        }
+    }
+
+    private static void addOrientationEntryIfAbsent(List<String> list, String entry)
+    {
+        if (!list.contains(entry))
+        {
+            list.add(entry);
+        }
     }
 
     private static ArrayList<String> defaultEnabledToolsClass()
     {
         ArrayList<String> list = new ArrayList<>();
-        list.add(TieredItem.class.getName());
+        list.add(DiggerItem.class.getName());
+        list.add(SwordItem.class.getName());
         list.add(ProjectileWeaponItem.class.getName());
         list.add(ShearsItem.class.getName());
         list.add(FishingRodItem.class.getName());
