@@ -1,54 +1,46 @@
 package com.astryxion.backtools.common;
 
+import com.astryxion.backtools.client.core.ClientModBusEvents;
 import com.astryxion.backtools.client.core.EventHandler;
 import com.astryxion.backtools.common.core.BackToolsConfig;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
-import net.minecraftforge.eventbus.api.IEventBus;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.fml.IExtensionPoint;
-import net.minecraftforge.fml.ModLoadingContext;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.config.ModConfig;
-import net.minecraftforge.fml.event.lifecycle.FMLLoadCompleteEvent;
-import net.minecraftforge.fml.event.lifecycle.InterModProcessEvent;
-import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
-import net.minecraftforge.network.NetworkConstants;
-import org.apache.logging.log4j.Level;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
+import net.neoforged.fml.event.lifecycle.FMLLoadCompleteEvent;
+import net.neoforged.fml.event.lifecycle.InterModProcessEvent;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.HashMap;
 import java.util.HashSet;
 
-@Mod(BackTools.MOD_ID)
+@Mod(value = BackTools.MOD_ID, dist = { Dist.CLIENT })
 public class BackTools
 {
     public static final String MOD_ID = "backtools";
-    public static final String MOD_NAME = "Back Tools";
 
     public static final Logger LOGGER = LogManager.getLogger();
 
     public static HashMap<Class<? extends Item>, Integer> imcOrientation = new HashMap<>();
     public static HashSet<ResourceLocation> imcDisabledTools = new HashSet<>();
 
-    public BackTools()
+    public BackTools(IEventBus modEventBus, ModContainer modContainer)
     {
-        IEventBus modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
-        ModLoadingContext modLoadingContext = ModLoadingContext.get();
+        modContainer.registerConfig(ModConfig.Type.CLIENT, BackToolsConfig.SPEC, BackToolsConfig.fileName());
 
-        modLoadingContext.registerConfig(ModConfig.Type.CLIENT, BackToolsConfig.SPEC);
+        modEventBus.addListener(ClientModBusEvents::onAddLayers);
+        modEventBus.addListener(ClientModBusEvents::onModConfigLoading);
+        modEventBus.addListener(ClientModBusEvents::onModConfigReloading);
 
-        DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> {
-            modEventBus.addListener(this::processIMC);
-            modEventBus.addListener(this::finishLoading);
-        });
-        DistExecutor.unsafeRunWhenOn(Dist.DEDICATED_SERVER, () -> () -> LOGGER.log(Level.ERROR, "You are loading " + MOD_NAME + " on a server. " + MOD_NAME + " is a client only mod!"));
-
-        modLoadingContext.registerExtensionPoint(IExtensionPoint.DisplayTest.class, () -> new IExtensionPoint.DisplayTest(() -> NetworkConstants.IGNORESERVERONLY, (a, b) -> true));
+        modEventBus.addListener(this::processIMC);
+        modEventBus.addListener(this::finishLoading);
     }
 
     @OnlyIn(Dist.CLIENT)
@@ -61,40 +53,40 @@ public class BackTools
     private void processIMC(InterModProcessEvent event)
     {
         event.getIMCStream(m -> m.equalsIgnoreCase("blacklist")).forEach(msg -> {
-            Object o = msg.getMessageSupplier().get();
+            Object o = msg.messageSupplier().get();
             if (o instanceof ItemStack is)
             {
-                ResourceLocation key = net.minecraftforge.registries.ForgeRegistries.ITEMS.getKey(is.getItem());
+                ResourceLocation key = BuiltInRegistries.ITEM.getKey(is.getItem());
                 if (!is.isEmpty() && key != null && imcDisabledTools.add(key))
                 {
-                    LOGGER.info("IMC-{}: Disabled {}", msg.getSenderModId(), key);
+                    LOGGER.info("IMC-{}: Disabled {}", msg.senderModId(), key);
                 }
                 else
                 {
-                    LOGGER.warn("IMC-{}: Unable to disable: {}", msg.getSenderModId(), is);
+                    LOGGER.warn("IMC-{}: Unable to disable: {}", msg.senderModId(), is);
                 }
             }
             else if (o instanceof Item item)
             {
-                ResourceLocation key = net.minecraftforge.registries.ForgeRegistries.ITEMS.getKey(item);
+                ResourceLocation key = BuiltInRegistries.ITEM.getKey(item);
                 if (key != null && imcDisabledTools.add(key))
                 {
-                    LOGGER.info("IMC-{}: Disabled {}", msg.getSenderModId(), item);
+                    LOGGER.info("IMC-{}: Disabled {}", msg.senderModId(), item);
                 }
                 else
                 {
-                    LOGGER.warn("IMC-{}: Unable to disable: {}", msg.getSenderModId(), item);
+                    LOGGER.warn("IMC-{}: Unable to disable: {}", msg.senderModId(), item);
                 }
             }
             else if (o instanceof ResourceLocation rl)
             {
                 if (imcDisabledTools.add(rl))
                 {
-                    LOGGER.info("IMC-{}: Disabled {}", msg.getSenderModId(), rl);
+                    LOGGER.info("IMC-{}: Disabled {}", msg.senderModId(), rl);
                 }
                 else
                 {
-                    LOGGER.warn("IMC-{}: Unable to disable: {}", msg.getSenderModId(), rl);
+                    LOGGER.warn("IMC-{}: Unable to disable: {}", msg.senderModId(), rl);
                 }
             }
             else if (o instanceof String s)
@@ -102,23 +94,23 @@ public class BackTools
                 ResourceLocation loc = ResourceLocation.tryParse(s);
                 if (loc == null)
                 {
-                    LOGGER.warn("IMC-{}: Invalid resource location: {}", msg.getSenderModId(), s);
+                    LOGGER.warn("IMC-{}: Invalid resource location: {}", msg.senderModId(), s);
                 }
                 else if (imcDisabledTools.add(loc))
                 {
-                    LOGGER.info("IMC-{}: Disabled {}", msg.getSenderModId(), s);
+                    LOGGER.info("IMC-{}: Disabled {}", msg.senderModId(), s);
                 }
                 else
                 {
-                    LOGGER.warn("IMC-{}: Unable to disable: {}", msg.getSenderModId(), s);
+                    LOGGER.warn("IMC-{}: Unable to disable: {}", msg.senderModId(), s);
                 }
             }
         });
         event.getIMCStream(m -> m.equalsIgnoreCase("orientation")).forEach(msg -> {
-            Object o = msg.getMessageSupplier().get();
+            Object o = msg.messageSupplier().get();
             if (!(o instanceof String s))
             {
-                BackTools.LOGGER.warn("IMC-{}: Passed object is not a string: {}", msg.getSenderModId(), o);
+                BackTools.LOGGER.warn("IMC-{}: Passed object is not a string: {}", msg.senderModId(), o);
                 return;
             }
 
@@ -131,7 +123,7 @@ public class BackTools
             }
             else
             {
-                BackTools.LOGGER.warn("IMC-{}: Could not parse orientation: {}", msg.getSenderModId(), s);
+                BackTools.LOGGER.warn("IMC-{}: Could not parse orientation: {}", msg.senderModId(), s);
                 return;
             }
             try
@@ -145,16 +137,16 @@ public class BackTools
                 }
                 else
                 {
-                    BackTools.LOGGER.warn("IMC-{}: Class does not extend Item class: {}", msg.getSenderModId(), split[0]);
+                    BackTools.LOGGER.warn("IMC-{}: Class does not extend Item class: {}", msg.senderModId(), split[0]);
                 }
             }
             catch (ClassNotFoundException e)
             {
-                BackTools.LOGGER.warn("IMC-{}: Could not find class to add orientation: {}", msg.getSenderModId(), split[0]);
+                BackTools.LOGGER.warn("IMC-{}: Could not find class to add orientation: {}", msg.senderModId(), split[0]);
             }
             catch (NumberFormatException e)
             {
-                BackTools.LOGGER.warn("IMC-{}: Could not parse integer: {}", msg.getSenderModId(), s);
+                BackTools.LOGGER.warn("IMC-{}: Could not parse integer: {}", msg.senderModId(), s);
             }
         });
     }

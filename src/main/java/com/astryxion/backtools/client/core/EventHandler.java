@@ -5,23 +5,27 @@ import com.astryxion.backtools.common.core.BackToolsConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtOps;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.tags.ItemTags;
+import net.minecraft.tags.TagKey;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
-import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
-import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.event.entity.EntityJoinLevelEvent;
-import net.minecraftforge.event.level.LevelEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.registries.ForgeRegistries;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
+import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
+import net.neoforged.neoforge.event.level.LevelEvent;
+import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 
-import javax.annotation.Nonnull;
+import org.jetbrains.annotations.NotNull;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -30,44 +34,45 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @OnlyIn(Dist.CLIENT)
-@Mod.EventBusSubscriber(modid = BackTools.MOD_ID, value = Dist.CLIENT)
+@EventBusSubscriber(modid = BackTools.MOD_ID, value = Dist.CLIENT)
 public class EventHandler
 {
+    private static final String LEGACY_PICKAXE_CLASS = "net.minecraft.world.item.PickaxeItem";
+    private static final String LEGACY_SWORD_CLASS = "net.minecraft.world.item.SwordItem";
+    private static final String LEGACY_DIGGER_CLASS = "net.minecraft.world.item.DiggerItem";
+
     public static WeakHashMap<AbstractClientPlayer, HeldInfo> heldTools = new WeakHashMap<>();
 
     public static HashSet<Pattern> enabledToolsID = new HashSet<>();
     public static HashSet<Class<? extends Item>> enabledToolsClass = new HashSet<>();
+    /** 1.21.5+: pickaxes/swords are registry-tagged {@link Item}s; legacy config still names removed {@code PickaxeItem}/{@code SwordItem} types. */
+    public static HashSet<TagKey<Item>> enabledToolTags = new HashSet<>();
     public static HashSet<Pattern> disabledToolsID = new HashSet<>();
     public static HashSet<Class<? extends Item>> disabledToolsClass = new HashSet<>();
     public static HashMap<Class<? extends Item>, Integer> toolOrientations = new HashMap<>();
+    /** Orientations for items that no longer use distinct tool subclasses (same legacy names as {@link #enabledToolTags}). */
+    public static HashMap<TagKey<Item>, Integer> toolTagOrientations = new HashMap<>();
 
     public static void setupConfig()
     {
         enabledToolsID.clear();
         enabledToolsClass.clear();
+        enabledToolTags.clear();
         for (String s : BackToolsConfig.ENABLED_TOOLS_ID.get())
         {
             enabledToolsID.add(Pattern.compile(s));
         }
         for (String s : BackToolsConfig.ENABLED_TOOLS_CLASS.get())
         {
-            try
+            addEnabledToolClassFromConfigString(s);
+        }
+
+        if (enabledToolsID.isEmpty() && enabledToolsClass.isEmpty() && enabledToolTags.isEmpty())
+        {
+            BackTools.LOGGER.warn("enabledToolsID and enabledToolsClass are both empty in config; restoring built-in tool classes.");
+            for (String s : BackToolsConfig.builtinEnabledToolClassNames())
             {
-                Class<?> clz = Class.forName(s);
-                if (Item.class.isAssignableFrom(clz))
-                {
-                    @SuppressWarnings("unchecked")
-                    Class<? extends Item> itemClass = (Class<? extends Item>) clz;
-                    enabledToolsClass.add(itemClass);
-                }
-                else
-                {
-                    BackTools.LOGGER.warn("Class {} does not extend Item class", clz);
-                }
-            }
-            catch (ClassNotFoundException e)
-            {
-                BackTools.LOGGER.warn("Cannot find class {}", s);
+                addEnabledToolClassFromConfigString(s);
             }
         }
 
@@ -81,7 +86,7 @@ public class EventHandler
         {
             try
             {
-                Class<?> clz = Class.forName(s);
+                Class<?> clz = Class.forName(s, false, EventHandler.class.getClassLoader());
                 if (Item.class.isAssignableFrom(clz))
                 {
                     @SuppressWarnings("unchecked")
@@ -100,6 +105,7 @@ public class EventHandler
         }
 
         toolOrientations.clear();
+        toolTagOrientations.clear();
         for (String s : BackToolsConfig.TOOL_ORIENTATION.get())
         {
             String[] split = new String[2];
@@ -114,14 +120,24 @@ public class EventHandler
                 BackTools.LOGGER.warn("Could not parse orientation: {}", s);
                 continue;
             }
+            int angle;
             try
             {
-                Class<?> clz = Class.forName(split[0]);
+                angle = Integer.parseInt(split[1]);
+            }
+            catch (NumberFormatException e)
+            {
+                BackTools.LOGGER.warn("Could not parse integer: {}", s);
+                continue;
+            }
+            try
+            {
+                Class<?> clz = Class.forName(split[0], false, EventHandler.class.getClassLoader());
                 if (Item.class.isAssignableFrom(clz))
                 {
                     @SuppressWarnings("unchecked")
                     Class<? extends Item> itemClass = (Class<? extends Item>) clz;
-                    toolOrientations.put(itemClass, Integer.parseInt(split[1]));
+                    toolOrientations.put(itemClass, angle);
                 }
                 else
                 {
@@ -130,18 +146,67 @@ public class EventHandler
             }
             catch (ClassNotFoundException e)
             {
-                BackTools.LOGGER.warn("Could not find class to add orientation: {}", split[0]);
-            }
-            catch (NumberFormatException e)
-            {
-                BackTools.LOGGER.warn("Could not parse integer: {}", s);
+                if (LEGACY_PICKAXE_CLASS.equals(split[0]))
+                {
+                    toolTagOrientations.put(ItemTags.PICKAXES, angle);
+                }
+                else if (LEGACY_DIGGER_CLASS.equals(split[0]))
+                {
+                    toolTagOrientations.put(ItemTags.PICKAXES, angle);
+                    toolTagOrientations.put(ItemTags.SHOVELS, angle);
+                }
+                else
+                {
+                    BackTools.LOGGER.warn("Could not find class to add orientation: {}", split[0]);
+                }
             }
         }
         toolOrientations.putAll(BackTools.imcOrientation);
     }
 
+    private static void addEnabledToolClassFromConfigString(String s)
+    {
+        try
+        {
+            Class<?> clz = Class.forName(s, false, EventHandler.class.getClassLoader());
+            if (Item.class.isAssignableFrom(clz))
+            {
+                @SuppressWarnings("unchecked")
+                Class<? extends Item> itemClass = (Class<? extends Item>) clz;
+                enabledToolsClass.add(itemClass);
+            }
+            else
+            {
+                BackTools.LOGGER.warn("Class {} does not extend Item class", clz);
+            }
+        }
+        catch (ClassNotFoundException e)
+        {
+            if (LEGACY_PICKAXE_CLASS.equals(s))
+            {
+                enabledToolTags.add(ItemTags.PICKAXES);
+            }
+            else if (LEGACY_SWORD_CLASS.equals(s))
+            {
+                enabledToolTags.add(ItemTags.SWORDS);
+            }
+            else
+            {
+                BackTools.LOGGER.warn("Cannot find class {}", s);
+            }
+        }
+    }
+
     public static Integer getToolOrientation(Item item)
     {
+        var holder = BuiltInRegistries.ITEM.wrapAsHolder(item);
+        for (var e : toolTagOrientations.entrySet())
+        {
+            if (holder.is(e.getKey()))
+            {
+                return e.getValue();
+            }
+        }
         return getToolOrientation(item.getClass());
     }
 
@@ -161,11 +226,11 @@ public class EventHandler
     }
 
     @SubscribeEvent
-    public static void onPlayerTick(TickEvent.PlayerTickEvent event)
+    public static void onPlayerTick(PlayerTickEvent.Pre event)
     {
-        if (event.phase == TickEvent.Phase.START && event.player.level().isClientSide)
+        if (event.getEntity().level().isClientSide)
         {
-            AbstractClientPlayer player = (AbstractClientPlayer) event.player;
+            AbstractClientPlayer player = (AbstractClientPlayer) event.getEntity();
             if (!player.isAlive())
             {
                 heldTools.remove(player);
@@ -173,7 +238,7 @@ public class EventHandler
             else
             {
                 HeldInfo info = heldTools.computeIfAbsent(player, v -> new HeldInfo());
-                info.tick(player.getMainHandItem().copy(), player.getOffhandItem().copy());
+                info.tick(player.getMainHandItem().copy(), player.getOffhandItem().copy(), player.level().registryAccess());
             }
         }
     }
@@ -218,7 +283,7 @@ public class EventHandler
 
     public static boolean isItemTool(Item item)
     {
-        ResourceLocation key = ForgeRegistries.ITEMS.getKey(item);
+        ResourceLocation key = BuiltInRegistries.ITEM.getKey(item);
         if (key == null)
         {
             return false;
@@ -258,30 +323,46 @@ public class EventHandler
                 return true;
             }
         }
+
+        var holder = BuiltInRegistries.ITEM.wrapAsHolder(item);
+        for (TagKey<Item> tag : enabledToolTags)
+        {
+            if (holder.is(tag))
+            {
+                return true;
+            }
+        }
         return false;
     }
 
-    public static boolean areItemStacksEqualToolsIgnoreDamage(@Nonnull ItemStack stackA, @Nonnull ItemStack stackB)
+    public static boolean areItemStacksEqualToolsIgnoreDamage(@NotNull ItemStack stackA, @NotNull ItemStack stackB, HolderLookup.Provider registries)
     {
-        if (stackA.isEmpty() || stackB.isEmpty() || stackA.hasTag() && !stackB.hasTag() || !stackA.hasTag() && stackB.hasTag() || stackA.getItem() != stackB.getItem())
+        if (stackA.isEmpty() || stackB.isEmpty() || stackA.getItem() != stackB.getItem())
         {
             return false;
         }
-        else if (stackA.hasTag() && stackB.hasTag())
+        boolean patchA = !stackA.isComponentsPatchEmpty();
+        boolean patchB = !stackB.isComponentsPatchEmpty();
+        if (patchA != patchB)
         {
-            CompoundTag tagA = stackA.getTag().copy();
-            CompoundTag tagB = stackB.getTag().copy();
+            return false;
+        }
+        if (patchA && patchB)
+        {
+            var nbtOps = registries.createSerializationContext(NbtOps.INSTANCE);
+            CompoundTag tagA = (CompoundTag) ItemStack.CODEC.encodeStart(nbtOps, stackA).getOrThrow();
+            CompoundTag tagB = (CompoundTag) ItemStack.CODEC.encodeStart(nbtOps, stackB).getOrThrow();
             for (String s : BackToolsConfig.NBT_CLEANER.get())
             {
                 tagA.remove(s);
                 tagB.remove(s);
             }
 
-            return tagA.equals(tagB) && stackA.areCapsCompatible(stackB);
+            return tagA.equals(tagB) && ItemStack.isSameItemSameComponents(stackA, stackB);
         }
         else
         {
-            return stackA.areCapsCompatible(stackB);
+            return ItemStack.isSameItemSameComponents(stackA, stackB);
         }
     }
 
@@ -295,33 +376,33 @@ public class EventHandler
         public ItemStack toolMain = ItemStack.EMPTY;
         public ItemStack toolOff = ItemStack.EMPTY;
 
-        public void tick(ItemStack main, ItemStack off)
+        public void tick(ItemStack main, ItemStack off, HolderLookup.Provider registries)
         {
             if (itemEntity != null && !itemEntity.getItem().isEmpty())
             {
-                checkItem(itemEntity);
+                checkItem(itemEntity, registries);
 
                 itemEntity = null;
                 return;
             }
 
-            if (areItemStacksEqualToolsIgnoreDamage(main, lastMain) || areItemStacksEqualToolsIgnoreDamage(off, lastMain))
+            if (areItemStacksEqualToolsIgnoreDamage(main, lastMain, registries) || areItemStacksEqualToolsIgnoreDamage(off, lastMain, registries))
             {
                 lastMain = ItemStack.EMPTY;
             }
 
-            if (areItemStacksEqualToolsIgnoreDamage(main, lastOff) || areItemStacksEqualToolsIgnoreDamage(off, lastOff))
+            if (areItemStacksEqualToolsIgnoreDamage(main, lastOff, registries) || areItemStacksEqualToolsIgnoreDamage(off, lastOff, registries))
             {
                 lastOff = ItemStack.EMPTY;
             }
 
-            if (!toolMain.isEmpty() && !areItemStacksEqualToolsIgnoreDamage(main, toolMain) && !areItemStacksEqualToolsIgnoreDamage(off, toolMain))
+            if (!toolMain.isEmpty() && !areItemStacksEqualToolsIgnoreDamage(main, toolMain, registries) && !areItemStacksEqualToolsIgnoreDamage(off, toolMain, registries))
             {
                 lastMain = toolMain;
                 toolMain = ItemStack.EMPTY;
             }
 
-            if (!toolOff.isEmpty() && !areItemStacksEqualToolsIgnoreDamage(main, toolOff) && !areItemStacksEqualToolsIgnoreDamage(off, toolOff))
+            if (!toolOff.isEmpty() && !areItemStacksEqualToolsIgnoreDamage(main, toolOff, registries) && !areItemStacksEqualToolsIgnoreDamage(off, toolOff, registries))
             {
                 lastOff = toolOff;
                 toolOff = ItemStack.EMPTY;
@@ -330,7 +411,7 @@ public class EventHandler
             if (isItemTool(main.getItem()))
             {
                 toolMain = main;
-                if (areItemStacksEqualToolsIgnoreDamage(toolMain, toolOff))
+                if (areItemStacksEqualToolsIgnoreDamage(toolMain, toolOff, registries))
                 {
                     toolOff = ItemStack.EMPTY;
                 }
@@ -339,31 +420,31 @@ public class EventHandler
             if (isItemTool(off.getItem()))
             {
                 toolOff = off;
-                if (areItemStacksEqualToolsIgnoreDamage(toolOff, toolMain))
+                if (areItemStacksEqualToolsIgnoreDamage(toolOff, toolMain, registries))
                 {
                     toolMain = ItemStack.EMPTY;
                 }
             }
         }
 
-        public void checkItem(ItemEntity item)
+        public void checkItem(ItemEntity item, HolderLookup.Provider registries)
         {
-            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), lastMain))
+            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), lastMain, registries))
             {
                 lastMain = ItemStack.EMPTY;
             }
 
-            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), toolMain))
+            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), toolMain, registries))
             {
                 toolMain = ItemStack.EMPTY;
             }
 
-            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), lastOff))
+            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), lastOff, registries))
             {
                 lastOff = ItemStack.EMPTY;
             }
 
-            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), toolOff))
+            if (areItemStacksEqualToolsIgnoreDamage(item.getItem(), toolOff, registries))
             {
                 toolOff = ItemStack.EMPTY;
             }
